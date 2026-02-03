@@ -69,6 +69,7 @@ Output in valid JSON format.
     }
   ]
 }
+```
 
 ---
 
@@ -180,6 +181,7 @@ The `answer` field MUST contain text that appears **exactly** in the source cont
   "query": "What is the refund policy?",
   "answer": "You can get a refund within thirty days"
 }
+```
 
 **CORRECT:**
 ```json
@@ -187,6 +189,7 @@ The `answer` field MUST contain text that appears **exactly** in the source cont
   "query": "whats ur refund polcy?",
   "answer": "Refunds are available within 30 days of purchase."
 }
+```
 
 ### Rule 2: Chunks Provide Context
 
@@ -368,6 +371,7 @@ Generate output like:
     }
   ]
 }
+```
 
 Notice: The example includes an Italian query, a long use-case description with typos, a bare phrase statement, a casual no-punctuation question, and a formal question. This is the level of diversity expected.
 
