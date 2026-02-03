@@ -1,0 +1,13 @@
+[project]
+name = "synthetic-data-gen"
+version = "0.1.0"
+description = "Generate synthetic Q&A data from a knowledge base using Claude CLI"
+requires-python = ">=3.10"
+dependencies = [
+    "langsmith>=0.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+]
