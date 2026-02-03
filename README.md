@@ -1,6 +1,6 @@
 # Synthetic Data Generator
 
-Generate synthetic Q&A pairs from a knowledge base using Claude CLI for RAG evaluation. Includes quality analysis to measure how closely synthetic data matches real production queries.
+Generate synthetic Q&A pairs from a knowledge base using Claude CLI for RAG evaluation. Includes quality analysis and an iterative prompt improvement loop to bring synthetic data closer to real production queries.
 
 ## Quick Start
 
@@ -15,7 +15,14 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 # 3. Analyze quality against real queries
 ./analysis.sh
 
-# 4. (Optional) Upload to LangSmith
+# 4. Improve prompt based on analysis
+./improve_prompt.sh
+
+# 5. Re-generate and re-analyze to measure improvement
+./generate.sh
+./analysis.sh
+
+# 6. (Optional) Upload to LangSmith
 cp example.env .env
 # Edit .env with your LANGSMITH_API_KEY
 ./upload_langsmith.sh
@@ -110,7 +117,44 @@ Analysis complete!
   | **Overall Score**     | **34%**   | **D** |
 ```
 
-### 3. Upload to LangSmith
+### 3. Improve Prompt (Iterative Loop)
+
+```bash
+./improve_prompt.sh
+```
+
+The script will interactively prompt for:
+- **Real queries path** (required): Path to real production queries JSON
+
+**What it does:**
+- Reads the current `prompt.md` and `analysis_report.md`
+- Samples 15 diverse real queries as style reference
+- Sends everything to Claude CLI to generate an improved prompt
+- Shows a diff of proposed changes
+- Asks for approval before applying
+
+**Before applying changes, it backs up the current version:**
+```
+backups/
+├── v1/
+│   ├── prompt.md              # The prompt used
+│   ├── output.jsonl           # The synthetic data generated
+│   ├── analysis_report.md     # The analysis that triggered changes
+│   └── metadata.json          # Run metadata (score, timestamp, counts)
+├── v2/
+│   └── ...
+```
+
+**The iterative improvement loop:**
+```
+./generate.sh → ./analysis.sh → ./improve_prompt.sh → (repeat)
+     ↓               ↓                ↓
+ output.jsonl   analysis_report.md   prompt.md (improved)
+```
+
+Each iteration should produce a higher analysis score as the prompt gets refined.
+
+### 4. Upload to LangSmith
 
 ```bash
 # Setup credentials
@@ -126,19 +170,27 @@ Get your API key from: https://smith.langchain.com/settings
 ## File Structure
 
 ```
-├── generate.sh              # Main generation script
-├── analysis.sh              # Quality analysis script
-├── upload_langsmith.sh      # LangSmith upload script
+├── generate.sh              # Generate synthetic Q&A pairs
+├── analysis.sh              # Analyze quality against real queries
+├── improve_prompt.sh        # Improve prompt based on analysis
+├── upload_langsmith.sh      # Upload to LangSmith
 ├── prompt.md                # Generation prompt template
 ├── analysis_prompt.md       # Analysis prompt template
+├── improve_prompt_template.md # Prompt improvement template
 ├── CLAUDE.md                # Claude instructions
 ├── pyproject.toml           # Python dependencies
 ├── example.env              # Environment template
 ├── helpers/
 │   ├── validate.py          # Fuzzy matching & deduplication
 │   └── upload_langsmith.py  # LangSmith upload logic
+├── backups/                 # Version history (auto-created)
+│   └── v1/
+│       ├── prompt.md
+│       ├── output.jsonl
+│       ├── analysis_report.md
+│       └── metadata.json
 ├── kb/                      # Your knowledge base (markdown files)
-└── queries/                 # Optional user queries
+└── queries/                 # Real user queries
     └── queries.json
 ```
 
@@ -280,6 +332,21 @@ LANGSMITH_DATASET_NAME=my-dataset                    # Optional
 │  6. Calculate weighted overall score                        │
 │  7. Generate report with examples & recommendations         │
 │  8. Save to analysis_report.md                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Improvement Loop
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  1. Read current prompt.md                                  │
+│  2. Read analysis_report.md (gaps identified)               │
+│  3. Sample 15 diverse real queries as style reference        │
+│  4. Call Claude CLI to generate improved prompt              │
+│  5. Show diff of changes                                    │
+│  6. Ask for user approval                                   │
+│  7. Backup current version (prompt + output + report)       │
+│  8. Apply improved prompt                                   │
 └─────────────────────────────────────────────────────────────┘
 ```
 

@@ -17,6 +17,11 @@ queries/
 # Temp directories
 .temp/
 .temp_analysis/
+.temp_improve/
+
+# Backups and previews
+backups/
+prompt_improved.md
 
 # Python
 __pycache__/
