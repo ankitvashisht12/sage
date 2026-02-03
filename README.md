@@ -18,9 +18,8 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 # 4. Improve prompt based on analysis
 ./improve_prompt.sh
 
-# 5. Re-generate and re-analyze to measure improvement
-./generate.sh
-./analysis.sh
+# 5. Or run the full automated pipeline
+./run_pipeline.sh --kb-path ./kb --queries-path ./queries/queries.json
 
 # 6. (Optional) Upload to LangSmith
 cp example.env .env
@@ -154,7 +153,78 @@ backups/
 
 Each iteration should produce a higher analysis score as the prompt gets refined.
 
-### 4. Upload to LangSmith
+### 4. Automated Pipeline
+
+```bash
+./run_pipeline.sh
+```
+
+Automates the full feedback loop: **generate -> analyze -> (improve -> generate -> analyze)** until the target score is reached or max iterations are exhausted.
+
+**CLI flags (skip interactive prompts):**
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--kb-path <dir>` | Knowledge base directory | prompt user |
+| `--queries-path <file>` | Real production queries JSON | prompt user |
+| `--max-iterations <n>` | Maximum iteration count | 10 |
+| `--target-score <n>` | Target similarity score (0-100) | 85 |
+
+**Example (fully non-interactive):**
+```bash
+./run_pipeline.sh \
+  --kb-path ./kb \
+  --queries-path ./queries/queries.json \
+  --max-iterations 5 \
+  --target-score 70
+```
+
+**What it does each iteration:**
+1. Cleans previous output (state file, output.jsonl, rejected.jsonl)
+2. Runs `generate.sh` with `--no-resume`
+3. Runs `analysis.sh` to score quality
+4. If score >= target: stops with success
+5. Runs `improve_prompt.sh` to refine the prompt
+6. Repeats
+
+**Error handling:**
+- Generation or analysis failure stops the pipeline immediately
+- Prompt improvement failure is tolerated once; 2 consecutive failures stops the pipeline
+- Ctrl+C prints a partial summary table
+
+**Output:**
+```
+  Iteration  |  Score  |  Delta
+  -----------+---------+--------
+      1      |   27%   |    -
+      2      |   45%   |  +18%
+      3      |   62%   |  +17%
+      4      |   78%   |  +16%
+      5      |   86%   |   +8%
+
+  Result: TARGET REACHED (86% >= 85%)
+  Total iterations: 5
+  Total improvement: +59%
+```
+
+**CLI args for individual scripts:**
+
+All three scripts also accept CLI arguments for non-interactive use:
+
+```bash
+# generate.sh
+./generate.sh --kb-path ./kb --queries-path ./queries/queries.json --no-resume
+
+# analysis.sh
+./analysis.sh --synthetic-path ./output.jsonl --queries-path ./queries/queries.json
+
+# improve_prompt.sh
+./improve_prompt.sh --queries-path ./queries/queries.json
+```
+
+When no flags are provided, each script falls back to its original interactive prompts.
+
+### 5. Upload to LangSmith
 
 ```bash
 # Setup credentials
@@ -173,6 +243,7 @@ Get your API key from: https://smith.langchain.com/settings
 ├── generate.sh              # Generate synthetic Q&A pairs
 ├── analysis.sh              # Analyze quality against real queries
 ├── improve_prompt.sh        # Improve prompt based on analysis
+├── run_pipeline.sh          # Automated feedback loop (generate->analyze->improve)
 ├── upload_langsmith.sh      # Upload to LangSmith
 ├── prompt.md                # Generation prompt template
 ├── analysis_prompt.md       # Analysis prompt template
