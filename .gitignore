@@ -5,6 +5,7 @@
 output.jsonl
 rejected.jsonl
 analysis.md
+analysis_report.md
 
 # User data (KB, queries)
 kb/
@@ -13,8 +14,9 @@ queries/
 # State files
 .generation_state.json
 
-# Temp directory
+# Temp directories
 .temp/
+.temp_analysis/
 
 # Python
 __pycache__/

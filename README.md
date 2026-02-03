@@ -1,6 +1,6 @@
 # Synthetic Data Generator
 
-Generate synthetic Q&A pairs from a knowledge base using Claude CLI for RAG evaluation.
+Generate synthetic Q&A pairs from a knowledge base using Claude CLI for RAG evaluation. Includes quality analysis to measure how closely synthetic data matches real production queries.
 
 ## Quick Start
 
@@ -12,7 +12,10 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 # 2. Generate synthetic data
 ./generate.sh
 
-# 3. (Optional) Upload to LangSmith
+# 3. Analyze quality against real queries
+./analysis.sh
+
+# 4. (Optional) Upload to LangSmith
 cp example.env .env
 # Edit .env with your LANGSMITH_API_KEY
 ./upload_langsmith.sh
@@ -51,7 +54,63 @@ The script will interactively prompt for:
 - `output.jsonl` - Valid Q&A pairs
 - `rejected.jsonl` - Failed validations with reasons
 
-### 2. Upload to LangSmith
+### 2. Analyze Synthetic Data Quality
+
+```bash
+./analysis.sh
+```
+
+The script will interactively prompt for:
+- **Synthetic data path** (required): Path to `output.jsonl`
+- **Real queries path** (required): Path to real production queries JSON
+
+**What it does:**
+- Sends both datasets to Claude CLI for comparison
+- Scores 8 dimensions (0-100%) with letter grades:
+  - Language distribution
+  - Typos & messiness
+  - Query length & complexity
+  - Topic coverage (2x weight)
+  - Intent & behavior (2x weight)
+  - Tone & formality
+  - Formatting artifacts
+  - Question style
+- Calculates weighted overall similarity score
+- Provides actionable recommendations
+
+**Output:**
+- `analysis_report.md` - Full report with scores, examples, and recommendations
+- Summary table displayed in terminal
+
+**Example output:**
+```
+Synthetic Data Analyzer
+========================
+
+Enter path to synthetic data (output.jsonl): ./output.jsonl
+Enter path to real production queries (queries.json): ./queries/tagged_queries.json
+
+Loaded 65 synthetic Q&A pairs
+Loaded 287 real production queries
+
+Running analysis with Claude CLI...
+
+Analysis complete!
+
+  Report saved to: ./analysis_report.md
+
+  Overall similarity score: 34%
+
+  | Dimension             | Similarity | Grade |
+  |-----------------------|-----------|-------|
+  | Language Distribution | 10%       | F     |
+  | Typos & Messiness     | 5%        | F     |
+  | Topic Coverage        | 35%       | D     |
+  | ...                   | ...       | ...   |
+  | **Overall Score**     | **34%**   | **D** |
+```
+
+### 3. Upload to LangSmith
 
 ```bash
 # Setup credentials
@@ -68,8 +127,10 @@ Get your API key from: https://smith.langchain.com/settings
 
 ```
 ├── generate.sh              # Main generation script
+├── analysis.sh              # Quality analysis script
 ├── upload_langsmith.sh      # LangSmith upload script
-├── prompt.md                # Prompt template (customizable)
+├── prompt.md                # Generation prompt template
+├── analysis_prompt.md       # Analysis prompt template
 ├── CLAUDE.md                # Claude instructions
 ├── pyproject.toml           # Python dependencies
 ├── example.env              # Environment template
@@ -189,6 +250,8 @@ LANGSMITH_DATASET_NAME=my-dataset                    # Optional
 
 ## How It Works
 
+### Generation Pipeline
+
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  For each markdown file:                                    │
@@ -202,6 +265,21 @@ LANGSMITH_DATASET_NAME=my-dataset                    # Optional
 │  7. Append valid pairs to output.jsonl                      │
 │  8. Log rejected pairs to rejected.jsonl                    │
 │  9. Save state for resume                                   │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Analysis Pipeline
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  1. Load synthetic data (output.jsonl)                      │
+│  2. Load real production queries (queries.json)             │
+│  3. Build analysis prompt with both datasets                │
+│  4. Call Claude CLI for comparison                          │
+│  5. Score 8 dimensions (0-100%)                             │
+│  6. Calculate weighted overall score                        │
+│  7. Generate report with examples & recommendations         │
+│  8. Save to analysis_report.md                              │
 └─────────────────────────────────────────────────────────────┘
 ```
 
