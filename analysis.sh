@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # Synthetic Data Analysis
 # Compares synthetic Q&A data against real production queries using Claude CLI

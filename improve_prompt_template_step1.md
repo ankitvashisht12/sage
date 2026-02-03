@@ -79,4 +79,11 @@ Output a JSON object with this structure:
 
 ## Output
 
-Output ONLY the JSON object. No explanations, no markdown code blocks, just raw valid JSON.
+CRITICAL: You are a JSON-producing function. Your entire response must be a single valid JSON object and nothing else.
+
+Rules:
+- Do NOT wrap in ```json code blocks
+- Do NOT add any preamble, explanation, or commentary before or after the JSON
+- The very first character of your response MUST be `{`
+- The very last character of your response MUST be `}`
+- If you violate these rules, the pipeline will fail

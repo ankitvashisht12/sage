@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # Pipeline Orchestration Script
 # Automates the feedback loop: generate -> analyze -> (improve -> generate -> analyze)

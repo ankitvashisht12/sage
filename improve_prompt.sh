@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # Prompt Improver (Two-Step Approach)
 #
@@ -340,13 +340,35 @@ main() {
         exit 1
     fi
 
-    # Try to extract JSON from response (handle code blocks)
+    # Try to extract JSON from response (handle code blocks and preamble)
     local clean_plan
+
+    # Attempt 1: ```json ... ``` blocks
     clean_plan=$(echo "$change_plan" | sed -n '/^```json/,/^```$/p' | sed '1d;$d')
 
+    # Attempt 2: bare ``` ... ``` blocks
     if [[ -z "$clean_plan" ]]; then
-        # Try raw JSON
+        clean_plan=$(echo "$change_plan" | sed -n '/^```$/,/^```$/p' | sed '1d;$d')
+        # Verify it's actually JSON
+        if [[ -n "$clean_plan" ]]; then
+            echo "$clean_plan" | jq '.' > /dev/null 2>&1 || clean_plan=""
+        fi
+    fi
+
+    # Attempt 3: raw JSON (entire response)
+    if [[ -z "$clean_plan" ]]; then
         clean_plan=$(echo "$change_plan" | jq '.' 2>/dev/null) || clean_plan=""
+    fi
+
+    # Attempt 4: last-resort — extract from first { to last }
+    if [[ -z "$clean_plan" ]]; then
+        local first_brace last_brace
+        first_brace=$(echo "$change_plan" | grep -n '{' | head -1 | cut -d: -f1)
+        last_brace=$(echo "$change_plan" | grep -n '}' | tail -1 | cut -d: -f1)
+        if [[ -n "$first_brace" && -n "$last_brace" && "$last_brace" -ge "$first_brace" ]]; then
+            clean_plan=$(echo "$change_plan" | sed -n "${first_brace},${last_brace}p")
+            echo "$clean_plan" | jq '.' > /dev/null 2>&1 || clean_plan=""
+        fi
     fi
 
     if [[ -z "$clean_plan" ]]; then
@@ -411,14 +433,28 @@ main() {
 
     # Validate the output
     if ! validate_prompt "$improved_file"; then
-        print_error "Validation failed: Output is not a valid prompt file"
-        echo ""
-        print_info "Expected: starts with #, contains {{KB_CONTENT}}, {{SOURCE_METADATA}}, {{USER_QUERIES}}, at least 50 lines"
-        echo ""
-        print_info "Raw output saved to: $TEMP_DIR/prompt_improved.md"
-        echo ""
-        print_warning "Prompt was NOT changed. Previous version is intact."
-        exit 1
+        print_warning "Initial cleanup didn't pass validation, trying fallback extraction..."
+
+        # Fallback: extract from first markdown heading to end of response
+        local heading_line
+        heading_line=$(echo "$improved_prompt" | grep -n '^#' | head -1 | cut -d: -f1)
+        if [[ -n "$heading_line" ]]; then
+            improved_prompt=$(echo "$improved_prompt" | tail -n +"$heading_line")
+            echo "$improved_prompt" > "$improved_file"
+        fi
+
+        if ! validate_prompt "$improved_file"; then
+            print_error "Validation failed: Output is not a valid prompt file"
+            echo ""
+            print_info "Expected: starts with #, contains {{KB_CONTENT}}, {{SOURCE_METADATA}}, {{USER_QUERIES}}, at least 50 lines"
+            echo ""
+            print_info "Raw output saved to: $TEMP_DIR/prompt_improved.md"
+            echo ""
+            print_warning "Prompt was NOT changed. Previous version is intact."
+            exit 1
+        fi
+
+        print_success "Fallback extraction succeeded"
     fi
 
     print_success "Improved prompt generated and validated!"
