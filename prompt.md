@@ -40,11 +40,11 @@ Generate query-answer pairs that **simulate real production traffic** to a chatb
 ## Output Requirements
 
 Generate an appropriate number of query-answer pairs based on the content depth and length:
-- **Short/simple pages**: 5-8 pairs
-- **Medium pages**: 8-15 pairs
-- **Long/detailed pages**: 15-25 pairs
+- **Short/simple pages**: 3-5 pairs
+- **Medium pages**: 5-8 pairs
+- **Long/detailed pages**: 8-10 pairs
 
-**Maximum: 25 pairs per page.** More pairs are needed to achieve the required diversity across languages, tones, styles, and query types while maintaining quality.
+**Maximum: 10 pairs per page.** More pairs are needed to achieve the required diversity across languages, tones, styles, and query types while maintaining quality.
 
 Output in valid JSON format.
 
