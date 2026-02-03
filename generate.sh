@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # Synthetic Data Generator
 # Generates Q&A pairs from a knowledge base using Claude CLI
@@ -244,7 +244,7 @@ main() {
     local processed_files="[]"
     local total_questions=0
 
-    if [[ $(echo "$state" | jq -e '.kb_path' 2>/dev/null) ]]; then
+    if echo "$state" | jq -e '.kb_path // empty' > /dev/null 2>&1; then
         local prev_kb
         prev_kb=$(echo "$state" | jq -r '.kb_path')
         local prev_count
@@ -343,14 +343,21 @@ main() {
     # Load existing questions for deduplication
     load_existing_questions
 
-    # Process each file
-    local current=0
+    # Concurrency limit for parallel generation
+    local MAX_PARALLEL=${MAX_PARALLEL:-5}
+
+    # ── Phase 1: Prepare prompts and launch parallel Claude calls ──────────
+
     local validated_count=0
     local rejected_count=0
+    local files_to_process=()
+    local pids=()
 
-    echo "Starting generation..."
+    echo "Starting generation (parallel, up to $MAX_PARALLEL concurrent)..."
     echo ""
 
+    # Build per-file prompt files and content files; collect list to process
+    local current=0
     for md_file in "${md_files[@]}"; do
         current=$((current + 1))
         local filename
@@ -358,12 +365,11 @@ main() {
 
         # Skip if already processed (resume mode)
         if is_file_processed "$filename" "$state" && [[ "$resume" == true ]]; then
-            print_progress $current $total_files "$filename (skipped)"
-            echo ""
+            print_info "Skipping (already processed): $filename"
             continue
         fi
 
-        print_progress $current $total_files "$filename"
+        files_to_process+=("$md_file")
 
         # Extract content and metadata
         local frontmatter
@@ -384,105 +390,166 @@ filename: $filename
 EOF
 )
 
-        # Build the full prompt
+        # Build the full prompt and save per-file temp files
         local full_prompt
         full_prompt=$(build_prompt "$content" "$source_metadata" "$user_queries")
 
-        # Save prompt to temp file (for large prompts)
-        local prompt_temp_file="$TEMP_DIR/current_prompt.md"
-        echo "$full_prompt" > "$prompt_temp_file"
-
-        # Call Claude CLI
-        local response=""
-        local claude_exit_code=0
-
-        response=$(claude --print -p "$(cat "$prompt_temp_file")" 2>/dev/null) || claude_exit_code=$?
-
-        if [[ $claude_exit_code -ne 0 || -z "$response" ]]; then
-            echo ""
-            print_error "Failed to get response for: $filename"
-            echo "{\"error\": \"claude_failed\", \"file\": \"$filename\", \"timestamp\": \"$(date -u +"%Y-%m-%dT%H:%M:%SZ")\"}" >> "$REJECTED_FILE"
-            continue
-        fi
-
-        # Try to extract JSON from response (handle markdown code blocks)
-        local json_response
-        json_response=$(echo "$response" | sed -n '/^```json/,/^```$/p' | sed '1d;$d')
-
-        if [[ -z "$json_response" ]]; then
-            # Try without code blocks
-            json_response=$(echo "$response" | jq '.' 2>/dev/null) || json_response=""
-        fi
-
-        if [[ -z "$json_response" ]]; then
-            echo ""
-            print_error "Invalid JSON response for: $filename"
-            echo "{\"error\": \"invalid_json\", \"file\": \"$filename\", \"response\": $(echo "$response" | jq -Rs '.'), \"timestamp\": \"$(date -u +"%Y-%m-%dT%H:%M:%SZ")\"}" >> "$REJECTED_FILE"
-            continue
-        fi
-
-        # Extract pairs from response
-        local pairs
-        pairs=$(echo "$json_response" | jq -c '.pairs // []')
-
-        if [[ "$pairs" == "[]" || -z "$pairs" ]]; then
-            echo ""
-            print_warning "No pairs generated for: $filename"
-            continue
-        fi
-
-        # Save content to temp file for validation
-        local content_temp_file="$TEMP_DIR/current_content.txt"
-        echo "$content" > "$content_temp_file"
-
-        # Validate pairs using Python helper (via uv for isolated env)
-        local validation_result
-        validation_result=$(uv run --project "$SCRIPT_DIR" python "$VALIDATE_SCRIPT" validate "$pairs" "$content_temp_file" "$EXISTING_QUESTIONS_FILE" 2>/dev/null) || validation_result=""
-
-        if [[ -z "$validation_result" ]]; then
-            echo ""
-            print_error "Validation failed for: $filename"
-            continue
-        fi
-
-        local valid_pairs
-        valid_pairs=$(echo "$validation_result" | jq -c '.valid')
-        local rejected_pairs
-        rejected_pairs=$(echo "$validation_result" | jq -c '.rejected')
-
-        local valid_count
-        valid_count=$(echo "$valid_pairs" | jq 'length')
-        local reject_count
-        reject_count=$(echo "$rejected_pairs" | jq 'length')
-
-        # Append valid pairs to output
-        if [[ "$valid_count" -gt 0 ]]; then
-            # Add source to each pair and append to output
-            echo "$valid_pairs" | jq -c --arg src "$source_url" '.[] | .source = [$src]' >> "$OUTPUT_FILE"
-
-            # Update existing questions
-            local new_questions
-            new_questions=$(echo "$valid_pairs" | jq '[.[].question]')
-            append_to_existing_questions "$new_questions"
-
-            validated_count=$((validated_count + valid_count))
-        fi
-
-        # Append rejected pairs to rejected file
-        if [[ "$reject_count" -gt 0 ]]; then
-            echo "$rejected_pairs" | jq -c --arg src "$filename" '.[] | .source_file = $src | .timestamp = (now | todate)' >> "$REJECTED_FILE"
-            rejected_count=$((rejected_count + reject_count))
-        fi
-
-        # Update progress display
-        echo ""
-        echo -e "       Generated: $valid_count | Validated: $valid_count | Rejected: $reject_count"
-
-        # Update state
-        processed_files=$(echo "$processed_files" | jq --arg f "$filename" '. + [$f]')
-        total_questions=$((total_questions + valid_count))
-        save_state "$KB_PATH" "$QUERIES_PATH" "$processed_files" "$total_questions"
+        local file_slug="${filename%.md}"
+        mkdir -p "$TEMP_DIR/jobs"
+        echo "$full_prompt" > "$TEMP_DIR/jobs/${file_slug}.prompt.md"
+        echo "$content"     > "$TEMP_DIR/jobs/${file_slug}.content.txt"
+        echo "$source_url"  > "$TEMP_DIR/jobs/${file_slug}.source_url.txt"
     done
+
+    local total_to_process=${#files_to_process[@]}
+    if [[ $total_to_process -eq 0 ]]; then
+        print_info "All files already processed."
+    else
+        print_info "Launching $total_to_process Claude calls (max $MAX_PARALLEL parallel)..."
+        echo ""
+
+        # Fan-out: launch background jobs with concurrency throttle
+        local running=0
+        for md_file in "${files_to_process[@]}"; do
+            local filename
+            filename=$(basename "$md_file")
+            local file_slug="${filename%.md}"
+            local prompt_file="$TEMP_DIR/jobs/${file_slug}.prompt.md"
+            local response_file="$TEMP_DIR/jobs/${file_slug}.response.txt"
+            local exit_file="$TEMP_DIR/jobs/${file_slug}.exit"
+
+            # Launch in background
+            (
+                claude --print -p "$(cat "$prompt_file")" > "$response_file" 2>/dev/null
+                echo $? > "$exit_file"
+            ) &
+            pids+=($!)
+            running=$((running + 1))
+
+            echo -e "  ${BLUE}▸${NC} Launched: $filename (pid $!)"
+
+            # Throttle: wait for a slot if at capacity
+            if [[ $running -ge $MAX_PARALLEL ]]; then
+                # Wait for any one job to finish
+                wait -n 2>/dev/null || true
+                running=$((running - 1))
+            fi
+        done
+
+        # Wait for all remaining jobs
+        print_info "Waiting for all jobs to complete..."
+        for pid in "${pids[@]}"; do
+            wait "$pid" 2>/dev/null || true
+        done
+        echo ""
+        print_success "All Claude calls finished"
+        echo ""
+
+        # ── Phase 2: Validate and collect results ─────────────────────────
+
+        print_info "Validating responses..."
+        echo ""
+
+        for md_file in "${files_to_process[@]}"; do
+            local filename
+            filename=$(basename "$md_file")
+            local file_slug="${filename%.md}"
+            local response_file="$TEMP_DIR/jobs/${file_slug}.response.txt"
+            local exit_file="$TEMP_DIR/jobs/${file_slug}.exit"
+            local content_file="$TEMP_DIR/jobs/${file_slug}.content.txt"
+            local source_url_file="$TEMP_DIR/jobs/${file_slug}.source_url.txt"
+
+            local source_url
+            source_url=$(cat "$source_url_file")
+
+            # Check Claude exit code
+            local claude_exit_code=0
+            if [[ -f "$exit_file" ]]; then
+                claude_exit_code=$(cat "$exit_file")
+            else
+                claude_exit_code=1
+            fi
+
+            local response=""
+            if [[ -f "$response_file" ]]; then
+                response=$(cat "$response_file")
+            fi
+
+            if [[ "$claude_exit_code" -ne 0 || -z "$response" ]]; then
+                print_error "Failed to get response for: $filename"
+                echo "{\"error\": \"claude_failed\", \"file\": \"$filename\", \"timestamp\": \"$(date -u +"%Y-%m-%dT%H:%M:%SZ")\"}" >> "$REJECTED_FILE"
+                continue
+            fi
+
+            # Try to extract JSON from response (handle markdown code blocks)
+            local json_response
+            json_response=$(echo "$response" | sed -n '/^```json/,/^```$/p' | sed '1d;$d')
+
+            if [[ -z "$json_response" ]]; then
+                # Try without code blocks
+                json_response=$(echo "$response" | jq '.' 2>/dev/null) || json_response=""
+            fi
+
+            if [[ -z "$json_response" ]]; then
+                print_error "Invalid JSON response for: $filename"
+                echo "{\"error\": \"invalid_json\", \"file\": \"$filename\", \"response\": $(echo "$response" | jq -Rs '.'), \"timestamp\": \"$(date -u +"%Y-%m-%dT%H:%M:%SZ")\"}" >> "$REJECTED_FILE"
+                continue
+            fi
+
+            # Extract pairs from response
+            local pairs
+            pairs=$(echo "$json_response" | jq -c '.pairs // []')
+
+            if [[ "$pairs" == "[]" || -z "$pairs" ]]; then
+                print_warning "No pairs generated for: $filename"
+                continue
+            fi
+
+            # Validate pairs using Python helper (via uv for isolated env)
+            local validation_result
+            validation_result=$(uv run --project "$SCRIPT_DIR" python "$VALIDATE_SCRIPT" validate "$pairs" "$content_file" "$EXISTING_QUESTIONS_FILE" 2>/dev/null) || validation_result=""
+
+            if [[ -z "$validation_result" ]]; then
+                print_error "Validation failed for: $filename"
+                continue
+            fi
+
+            local valid_pairs
+            valid_pairs=$(echo "$validation_result" | jq -c '.valid')
+            local rejected_pairs
+            rejected_pairs=$(echo "$validation_result" | jq -c '.rejected')
+
+            local valid_count
+            valid_count=$(echo "$valid_pairs" | jq 'length')
+            local reject_count
+            reject_count=$(echo "$rejected_pairs" | jq 'length')
+
+            # Append valid pairs to output
+            if [[ "$valid_count" -gt 0 ]]; then
+                echo "$valid_pairs" | jq -c --arg src "$source_url" '.[] | .source = [$src]' >> "$OUTPUT_FILE"
+
+                # Update existing questions for cross-file deduplication
+                local new_questions
+                new_questions=$(echo "$valid_pairs" | jq '[.[].question]')
+                append_to_existing_questions "$new_questions"
+
+                validated_count=$((validated_count + valid_count))
+            fi
+
+            # Append rejected pairs to rejected file
+            if [[ "$reject_count" -gt 0 ]]; then
+                echo "$rejected_pairs" | jq -c --arg src "$filename" '.[] | .source_file = $src | .timestamp = (now | todate)' >> "$REJECTED_FILE"
+                rejected_count=$((rejected_count + reject_count))
+            fi
+
+            echo -e "  ${GREEN}✓${NC} $filename — valid: $valid_count, rejected: $reject_count"
+
+            # Update state
+            processed_files=$(echo "$processed_files" | jq --arg f "$filename" '. + [$f]')
+            total_questions=$((total_questions + valid_count))
+            save_state "$KB_PATH" "$QUERIES_PATH" "$processed_files" "$total_questions"
+        done
+    fi
 
     # Clean up temp directory
     rm -rf "$TEMP_DIR"
