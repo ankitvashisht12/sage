@@ -60,6 +60,28 @@ print_info() {
 # ------------------------------------------------------------------------------
 
 main() {
+    # Parse CLI arguments
+    local ARG_SYNTHETIC_PATH=""
+    local ARG_QUERIES_PATH=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --synthetic-path)
+                ARG_SYNTHETIC_PATH="$2"
+                shift 2
+                ;;
+            --queries-path)
+                ARG_QUERIES_PATH="$2"
+                shift 2
+                ;;
+            *)
+                print_error "Unknown argument: $1"
+                echo "Usage: analysis.sh [--synthetic-path <file>] [--queries-path <file>]"
+                exit 1
+                ;;
+        esac
+    done
+
     print_header
 
     # Check for required tools
@@ -82,9 +104,13 @@ main() {
     # Create temp directory
     mkdir -p "$TEMP_DIR"
 
-    # Ask for synthetic data path
-    echo ""
-    read -p "Enter path to synthetic data (output.jsonl): " SYNTHETIC_PATH
+    # Synthetic data path: use CLI arg or prompt
+    if [[ -n "$ARG_SYNTHETIC_PATH" ]]; then
+        SYNTHETIC_PATH="$ARG_SYNTHETIC_PATH"
+    else
+        echo ""
+        read -p "Enter path to synthetic data (output.jsonl): " SYNTHETIC_PATH
+    fi
 
     # Expand and resolve path
     SYNTHETIC_PATH=$(eval echo "$SYNTHETIC_PATH")
@@ -97,9 +123,13 @@ main() {
         exit 1
     fi
 
-    # Ask for real queries path
-    echo ""
-    read -p "Enter path to real production queries (queries.json): " REAL_QUERIES_PATH
+    # Real queries path: use CLI arg or prompt
+    if [[ -n "$ARG_QUERIES_PATH" ]]; then
+        REAL_QUERIES_PATH="$ARG_QUERIES_PATH"
+    else
+        echo ""
+        read -p "Enter path to real production queries (queries.json): " REAL_QUERIES_PATH
+    fi
 
     # Expand and resolve path
     REAL_QUERIES_PATH=$(eval echo "$REAL_QUERIES_PATH")

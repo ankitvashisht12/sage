@@ -101,7 +101,10 @@ extract_url_from_frontmatter() {
 # Get existing questions from output.jsonl
 load_existing_questions() {
     if [[ -f "$OUTPUT_FILE" ]]; then
-        jq -s '[.[].question]' "$OUTPUT_FILE" > "$EXISTING_QUESTIONS_FILE"
+        if ! jq -s '[.[].question]' "$OUTPUT_FILE" > "$EXISTING_QUESTIONS_FILE" 2>/dev/null; then
+            print_warning "output.jsonl is corrupt — starting with empty question list"
+            echo "[]" > "$EXISTING_QUESTIONS_FILE"
+        fi
     else
         echo "[]" > "$EXISTING_QUESTIONS_FILE"
     fi
@@ -175,6 +178,33 @@ build_prompt() {
 # ------------------------------------------------------------------------------
 
 main() {
+    # Parse CLI arguments
+    local ARG_KB_PATH=""
+    local ARG_QUERIES_PATH=""
+    local ARG_NO_RESUME=false
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --kb-path)
+                ARG_KB_PATH="$2"
+                shift 2
+                ;;
+            --queries-path)
+                ARG_QUERIES_PATH="$2"
+                shift 2
+                ;;
+            --no-resume)
+                ARG_NO_RESUME=true
+                shift
+                ;;
+            *)
+                print_error "Unknown argument: $1"
+                echo "Usage: generate.sh [--kb-path <dir>] [--queries-path <file>] [--no-resume]"
+                exit 1
+                ;;
+        esac
+    done
+
     print_header
 
     # Create temp directory
@@ -200,6 +230,11 @@ main() {
     if [[ ! -f "$PROMPT_FILE" ]]; then
         print_error "Prompt file not found: $PROMPT_FILE"
         exit 1
+    fi
+
+    # Handle --no-resume: delete state file before checking
+    if [[ "$ARG_NO_RESUME" == true ]]; then
+        rm -f "$STATE_FILE"
     fi
 
     # Check for resume state
@@ -237,8 +272,13 @@ main() {
 
     # Interactive prompts (if not resuming)
     if [[ "$resume" == false ]]; then
-        echo ""
-        read -p "Enter path to knowledge base (KB) directory: " KB_PATH
+        # KB path: use CLI arg or prompt
+        if [[ -n "$ARG_KB_PATH" ]]; then
+            KB_PATH="$ARG_KB_PATH"
+        else
+            echo ""
+            read -p "Enter path to knowledge base (KB) directory: " KB_PATH
+        fi
 
         # Expand path
         KB_PATH=$(eval echo "$KB_PATH")
@@ -253,8 +293,13 @@ main() {
             exit 1
         fi
 
-        echo ""
-        read -p "Enter path to queries.json (optional, press Enter to skip): " QUERIES_PATH
+        # Queries path: use CLI arg or prompt
+        if [[ -n "$ARG_QUERIES_PATH" ]]; then
+            QUERIES_PATH="$ARG_QUERIES_PATH"
+        else
+            echo ""
+            read -p "Enter path to queries.json (optional, press Enter to skip): " QUERIES_PATH
+        fi
 
         if [[ -n "$QUERIES_PATH" ]]; then
             QUERIES_PATH=$(eval echo "$QUERIES_PATH")

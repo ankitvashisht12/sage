@@ -193,6 +193,23 @@ show_diff() {
 # ------------------------------------------------------------------------------
 
 main() {
+    # Parse CLI arguments
+    local ARG_QUERIES_PATH=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --queries-path)
+                ARG_QUERIES_PATH="$2"
+                shift 2
+                ;;
+            *)
+                print_error "Unknown argument: $1"
+                echo "Usage: improve_prompt.sh [--queries-path <file>]"
+                exit 1
+                ;;
+        esac
+    done
+
     print_header
 
     # Check for required tools
@@ -229,9 +246,13 @@ main() {
         exit 1
     fi
 
-    # Ask for real queries path
-    echo ""
-    read -p "Enter path to real production queries (queries.json): " REAL_QUERIES_PATH
+    # Real queries path: use CLI arg or prompt
+    if [[ -n "$ARG_QUERIES_PATH" ]]; then
+        REAL_QUERIES_PATH="$ARG_QUERIES_PATH"
+    else
+        echo ""
+        read -p "Enter path to real production queries (queries.json): " REAL_QUERIES_PATH
+    fi
 
     REAL_QUERIES_PATH=$(eval echo "$REAL_QUERIES_PATH")
     if [[ ! "$REAL_QUERIES_PATH" = /* ]]; then
@@ -418,6 +439,11 @@ main() {
     cp "$improved_file" "$PROMPT_FILE"
     echo ""
     print_success "Updated prompt.md with improvements"
+
+    # Clean stale output — prompt changed, old synthetic data is invalid
+    rm -f "$OUTPUT_FILE" "$SCRIPT_DIR/rejected.jsonl"
+    rm -f "$SCRIPT_DIR/.generation_state.json"
+    print_success "Cleaned stale output files (backed up in v$current_version)"
 
     # Clean up temp directory
     rm -rf "$TEMP_DIR"
