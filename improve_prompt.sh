@@ -1,8 +1,11 @@
 #!/bin/bash
 #
-# Prompt Improver
-# Reads analysis report + current prompt, generates an improved prompt
-# Backs up previous version (prompt + output + report) before applying
+# Prompt Improver (Two-Step Approach)
+#
+# Step 1: Claude analyzes gaps and produces a structured change plan
+# Step 2: Claude applies the change plan to the prompt and outputs the complete file
+#
+# Backs up previous version before applying changes automatically.
 #
 
 set -e
@@ -22,7 +25,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROMPT_FILE="$SCRIPT_DIR/prompt.md"
 OUTPUT_FILE="$SCRIPT_DIR/output.jsonl"
 REPORT_FILE="$SCRIPT_DIR/analysis_report.md"
-IMPROVE_TEMPLATE="$SCRIPT_DIR/improve_prompt_template.md"
+STEP1_TEMPLATE="$SCRIPT_DIR/improve_prompt_template_step1.md"
+STEP2_TEMPLATE="$SCRIPT_DIR/improve_prompt_template_step2.md"
 BACKUPS_DIR="$SCRIPT_DIR/backups"
 TEMP_DIR="$SCRIPT_DIR/.temp_improve"
 
@@ -33,7 +37,7 @@ TEMP_DIR="$SCRIPT_DIR/.temp_improve"
 print_header() {
     echo -e "${CYAN}"
     echo "╔═══════════════════════════════════════════════════════════════╗"
-    echo "║           Prompt Improver                                     ║"
+    echo "║           Prompt Improver (Two-Step)                          ║"
     echo "║           Using Claude CLI                                    ║"
     echo "╚═══════════════════════════════════════════════════════════════╝"
     echo -e "${NC}"
@@ -128,6 +132,38 @@ create_backup() {
     print_info "Backup saved to: $backup_dir"
 }
 
+# Validate that the output is a proper prompt file
+validate_prompt() {
+    local file=$1
+
+    # Check it starts with a markdown heading
+    if ! head -1 "$file" | grep -q "^#"; then
+        return 1
+    fi
+
+    # Check it contains required placeholders
+    if ! grep -q "{{KB_CONTENT}}" "$file"; then
+        return 1
+    fi
+
+    if ! grep -q "{{SOURCE_METADATA}}" "$file"; then
+        return 1
+    fi
+
+    if ! grep -q "{{USER_QUERIES}}" "$file"; then
+        return 1
+    fi
+
+    # Check it has reasonable length (at least 50 lines)
+    local line_count
+    line_count=$(wc -l < "$file" | tr -d ' ')
+    if [[ "$line_count" -lt 50 ]]; then
+        return 1
+    fi
+
+    return 0
+}
+
 # Show diff between old and new prompt
 show_diff() {
     local old_file=$1
@@ -140,7 +176,6 @@ show_diff() {
     if command -v diff &> /dev/null; then
         diff --color=auto -u "$old_file" "$new_file" 2>/dev/null || true
     else
-        echo "(diff not available, showing summary)"
         local old_lines
         old_lines=$(wc -l < "$old_file" | tr -d ' ')
         local new_lines
@@ -177,8 +212,13 @@ main() {
         exit 1
     fi
 
-    if [[ ! -f "$IMPROVE_TEMPLATE" ]]; then
-        print_error "Improve template not found: $IMPROVE_TEMPLATE"
+    if [[ ! -f "$STEP1_TEMPLATE" ]]; then
+        print_error "Step 1 template not found: $STEP1_TEMPLATE"
+        exit 1
+    fi
+
+    if [[ ! -f "$STEP2_TEMPLATE" ]]; then
+        print_error "Step 2 template not found: $STEP2_TEMPLATE"
         exit 1
     fi
 
@@ -225,7 +265,7 @@ main() {
     done
     echo ""
 
-    # Sample 15 diverse real queries for the prompt
+    # Sample 15 diverse real queries
     local total_queries
     total_queries=$(jq '.queries | length' "$REAL_QUERIES_PATH")
 
@@ -233,7 +273,6 @@ main() {
     if [[ "$total_queries" -le 15 ]]; then
         sample_queries=$(jq -r '.queries[] | "[\(.topic)] \(.query)"' "$REAL_QUERIES_PATH")
     else
-        # Pick 15 evenly spaced queries for diversity
         sample_queries=$(jq -r --argjson step "$(( total_queries / 15 ))" '
             [.queries | to_entries[] | select(.key % $step == 0)] |
             .[0:15][] |
@@ -241,100 +280,162 @@ main() {
         ' "$REAL_QUERIES_PATH")
     fi
 
-    # Build the improvement prompt
-    print_info "Building improvement prompt..."
-
-    local template
-    template=$(cat "$IMPROVE_TEMPLATE")
-
+    # Load current prompt and report
     local current_prompt
     current_prompt=$(cat "$PROMPT_FILE")
 
     local analysis_report
     analysis_report=$(cat "$REPORT_FILE")
 
-    # Write components to temp files to handle substitution
+    # Write components to temp files
     echo "$current_prompt" > "$TEMP_DIR/current_prompt.txt"
     echo "$analysis_report" > "$TEMP_DIR/analysis_report.txt"
     echo "$sample_queries" > "$TEMP_DIR/real_samples.txt"
 
-    template="${template//\{\{CURRENT_PROMPT\}\}/$(cat "$TEMP_DIR/current_prompt.txt")}"
-    template="${template//\{\{ANALYSIS_REPORT\}\}/$(cat "$TEMP_DIR/analysis_report.txt")}"
-    template="${template//\{\{REAL_QUERY_SAMPLES\}\}/$(cat "$TEMP_DIR/real_samples.txt")}"
+    # ══════════════════════════════════════════════════════════════════════════
+    # STEP 1: Generate change plan
+    # ══════════════════════════════════════════════════════════════════════════
 
-    local prompt_file="$TEMP_DIR/full_prompt.md"
-    echo "$template" > "$prompt_file"
-
-    # Call Claude CLI
-    echo ""
-    print_info "Generating improved prompt with Claude CLI..."
-    print_info "This may take a moment..."
+    print_info "Step 1/2: Analyzing gaps and generating change plan..."
     echo ""
 
-    local response=""
-    local claude_exit_code=0
+    local step1_template
+    step1_template=$(cat "$STEP1_TEMPLATE")
 
-    response=$(claude --print -p "$(cat "$prompt_file")" 2>/dev/null) || claude_exit_code=$?
+    step1_template="${step1_template//\{\{CURRENT_PROMPT\}\}/$(cat "$TEMP_DIR/current_prompt.txt")}"
+    step1_template="${step1_template//\{\{ANALYSIS_REPORT\}\}/$(cat "$TEMP_DIR/analysis_report.txt")}"
+    step1_template="${step1_template//\{\{REAL_QUERY_SAMPLES\}\}/$(cat "$TEMP_DIR/real_samples.txt")}"
 
-    if [[ $claude_exit_code -ne 0 || -z "$response" ]]; then
-        print_error "Failed to get response from Claude CLI"
+    echo "$step1_template" > "$TEMP_DIR/step1_prompt.md"
+
+    local change_plan=""
+    local step1_exit=0
+
+    change_plan=$(claude --print -p "$(cat "$TEMP_DIR/step1_prompt.md")" 2>/dev/null) || step1_exit=$?
+
+    if [[ $step1_exit -ne 0 || -z "$change_plan" ]]; then
+        print_error "Step 1 failed: Could not generate change plan"
+        rm -rf "$TEMP_DIR"
+        exit 1
+    fi
+
+    # Try to extract JSON from response (handle code blocks)
+    local clean_plan
+    clean_plan=$(echo "$change_plan" | sed -n '/^```json/,/^```$/p' | sed '1d;$d')
+
+    if [[ -z "$clean_plan" ]]; then
+        # Try raw JSON
+        clean_plan=$(echo "$change_plan" | jq '.' 2>/dev/null) || clean_plan=""
+    fi
+
+    if [[ -z "$clean_plan" ]]; then
+        print_error "Step 1 failed: Response was not valid JSON"
+        echo "$change_plan" > "$TEMP_DIR/step1_raw_response.txt"
+        print_info "Raw response saved to: $TEMP_DIR/step1_raw_response.txt"
+        rm -rf "$TEMP_DIR"
+        exit 1
+    fi
+
+    # Show change plan summary
+    local num_changes
+    num_changes=$(echo "$clean_plan" | jq '.changes | length')
+    local summary
+    summary=$(echo "$clean_plan" | jq -r '.summary')
+
+    print_success "Change plan generated: $num_changes changes"
+    echo ""
+    echo -e "  ${CYAN}Summary:${NC} $summary"
+    echo ""
+
+    # Show individual changes
+    echo -e "  ${CYAN}Changes:${NC}"
+    echo "$clean_plan" | jq -r '.changes[] | "    [\(.action)] \(.target): \(.description)"'
+    echo ""
+
+    # Save change plan
+    echo "$clean_plan" > "$TEMP_DIR/change_plan.json"
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # STEP 2: Apply change plan to prompt
+    # ══════════════════════════════════════════════════════════════════════════
+
+    print_info "Step 2/2: Applying changes to prompt..."
+    echo ""
+
+    local step2_template
+    step2_template=$(cat "$STEP2_TEMPLATE")
+
+    step2_template="${step2_template//\{\{ORIGINAL_PROMPT\}\}/$(cat "$TEMP_DIR/current_prompt.txt")}"
+    step2_template="${step2_template//\{\{CHANGE_PLAN\}\}/$(cat "$TEMP_DIR/change_plan.json")}"
+
+    echo "$step2_template" > "$TEMP_DIR/step2_prompt.md"
+
+    local improved_prompt=""
+    local step2_exit=0
+
+    improved_prompt=$(claude --print -p "$(cat "$TEMP_DIR/step2_prompt.md")" 2>/dev/null) || step2_exit=$?
+
+    if [[ $step2_exit -ne 0 || -z "$improved_prompt" ]]; then
+        print_error "Step 2 failed: Could not generate improved prompt"
         rm -rf "$TEMP_DIR"
         exit 1
     fi
 
     # Clean response (remove code blocks if wrapped)
-    local improved_prompt
-    improved_prompt=$(echo "$response" | sed '/^```markdown$/d; /^```$/d')
+    improved_prompt=$(echo "$improved_prompt" | sed '/^```markdown$/d; /^```$/d')
 
-    # Save improved prompt to temp file for preview
+    # Save to temp file for validation
     local improved_file="$TEMP_DIR/prompt_improved.md"
     echo "$improved_prompt" > "$improved_file"
 
+    # Validate the output
+    if ! validate_prompt "$improved_file"; then
+        print_error "Validation failed: Output is not a valid prompt file"
+        echo ""
+        print_info "Expected: starts with #, contains {{KB_CONTENT}}, {{SOURCE_METADATA}}, {{USER_QUERIES}}, at least 50 lines"
+        echo ""
+        print_info "Raw output saved to: $TEMP_DIR/prompt_improved.md"
+        echo ""
+        print_warning "Prompt was NOT changed. Previous version is intact."
+        exit 1
+    fi
+
+    print_success "Improved prompt generated and validated!"
+
     # Show diff
-    print_success "Improved prompt generated!"
     show_diff "$PROMPT_FILE" "$improved_file"
 
-    # Also save preview copy
-    cp "$improved_file" "$SCRIPT_DIR/prompt_improved.md"
-    print_info "Preview saved to: prompt_improved.md"
-
-    # Ask for approval
+    # Create backup before applying
     echo ""
-    read -p "Apply changes to prompt.md? [y/N]: " apply_choice
+    print_info "Creating backup (v$current_version)..."
+    create_backup "$current_version"
 
-    if [[ "$apply_choice" == "y" || "$apply_choice" == "Y" ]]; then
-        # Create backup
-        echo ""
-        print_info "Creating backup (v$current_version)..."
-        create_backup "$current_version"
+    # Save change plan to backup too
+    cp "$TEMP_DIR/change_plan.json" "$BACKUPS_DIR/v$current_version/change_plan.json"
+    print_success "Backed up change_plan.json"
 
-        # Apply improved prompt
-        cp "$improved_file" "$PROMPT_FILE"
-        echo ""
-        print_success "Updated prompt.md with improvements"
-
-        # Clean up preview file
-        rm -f "$SCRIPT_DIR/prompt_improved.md"
-
-        # Final summary
-        echo ""
-        echo -e "${CYAN}═══════════════════════════════════════════════════════════════${NC}"
-        echo -e "${GREEN}Prompt improved!${NC}"
-        echo ""
-        echo -e "  Previous version backed up to: ${BLUE}$BACKUPS_DIR/v$current_version/${NC}"
-        echo -e "  Previous analysis score:       ${YELLOW}$overall_score${NC}"
-        echo ""
-        echo -e "  Next steps:"
-        echo -e "    1. Run ${CYAN}./generate.sh${NC} to generate new synthetic data"
-        echo -e "    2. Run ${CYAN}./analysis.sh${NC} to measure improvement"
-        echo ""
-        echo -e "${CYAN}═══════════════════════════════════════════════════════════════${NC}"
-    else
-        print_warning "Changes not applied. Preview available at: prompt_improved.md"
-    fi
+    # Apply improved prompt
+    cp "$improved_file" "$PROMPT_FILE"
+    echo ""
+    print_success "Updated prompt.md with improvements"
 
     # Clean up temp directory
     rm -rf "$TEMP_DIR"
+
+    # Final summary
+    echo ""
+    echo -e "${CYAN}═══════════════════════════════════════════════════════════════${NC}"
+    echo -e "${GREEN}Prompt improved!${NC}"
+    echo ""
+    echo -e "  Previous version backed up to: ${BLUE}$BACKUPS_DIR/v$current_version/${NC}"
+    echo -e "  Previous analysis score:       ${YELLOW}$overall_score${NC}"
+    echo -e "  Changes applied:               ${GREEN}$num_changes${NC}"
+    echo ""
+    echo -e "  Next steps:"
+    echo -e "    1. Run ${CYAN}./generate.sh${NC} to generate new synthetic data"
+    echo -e "    2. Run ${CYAN}./analysis.sh${NC} to measure improvement"
+    echo ""
+    echo -e "${CYAN}═══════════════════════════════════════════════════════════════${NC}"
 }
 
 # Run main
