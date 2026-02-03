@@ -1,6 +1,6 @@
-# Synthetic Data Generator
+# SAGE — Synthetic Autonomous Generation Engine
 
-Generate synthetic Q&A pairs from a knowledge base using Claude CLI for RAG evaluation. Includes quality analysis and an iterative prompt improvement loop to bring synthetic data closer to real production queries.
+Generate synthetic Q&A pairs from a knowledge base using Claude CLI for RAG evaluation. SAGE includes quality analysis and an iterative prompt improvement loop that automatically refines generation prompts until synthetic data closely matches real production queries.
 
 ## Quick Start
 
