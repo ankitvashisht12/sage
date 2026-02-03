@@ -70,7 +70,7 @@ def upload_to_langsmith(
         try:
             # Structure for RAG evaluation
             inputs = {
-                "question": item.get("question", ""),
+                "question": item.get("query", ""),
             }
 
             outputs = {
