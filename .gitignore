@@ -1,0 +1,47 @@
+# Environment files (contains secrets)
+.env
+
+# Generated output files
+output.jsonl
+rejected.jsonl
+analysis.md
+
+# User data (KB, queries)
+kb/
+queries/
+
+# State files
+.generation_state.json
+
+# Temp directory
+.temp/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+*.so
+.eggs/
+*.egg-info/
+*.egg
+
+# Virtual environments
+venv/
+env/
+.venv/
+
+# uv
+.python-version
+uv.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
