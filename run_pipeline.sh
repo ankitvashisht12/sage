@@ -128,6 +128,7 @@ main() {
     local ARG_QUERIES_PATH=""
     local ARG_MAX_ITERATIONS=""
     local ARG_TARGET_SCORE=""
+    local ARG_SAMPLE=""
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -147,9 +148,13 @@ main() {
                 ARG_TARGET_SCORE="$2"
                 shift 2
                 ;;
+            --sample)
+                ARG_SAMPLE="$2"
+                shift 2
+                ;;
             *)
                 print_error "Unknown argument: $1"
-                echo "Usage: run_pipeline.sh [--kb-path <dir>] [--queries-path <file>] [--max-iterations <n>] [--target-score <n>]"
+                echo "Usage: run_pipeline.sh [--kb-path <dir>] [--queries-path <file>] [--max-iterations <n>] [--target-score <n>] [--sample <n>]"
                 exit 1
                 ;;
         esac
@@ -238,7 +243,9 @@ main() {
         echo ""
 
         local gen_exit=0
-        "$SCRIPT_DIR/generate.sh" --kb-path "$KB_PATH" --queries-path "$QUERIES_PATH" --no-resume || gen_exit=$?
+        local gen_args=(--kb-path "$KB_PATH" --queries-path "$QUERIES_PATH" --no-resume)
+        [[ -n "$ARG_SAMPLE" ]] && gen_args+=(--sample "$ARG_SAMPLE")
+        "$SCRIPT_DIR/generate.sh" "${gen_args[@]}" || gen_exit=$?
 
         if [[ $gen_exit -ne 0 ]]; then
             echo ""
