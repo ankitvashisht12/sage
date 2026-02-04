@@ -74,7 +74,14 @@ def upload_to_langsmith(
             }
 
             outputs = {
-                "answer": item.get("answer", ""),
+                "references": [
+                    {
+                        "doc_id": item.get("doc_id", ""),
+                        "start_index": item.get("start_index", 0),
+                        "end_index": item.get("end_index", 0),
+                    }
+                ],
+                "citation": item.get("citation", ""),
                 "chunks": item.get("chunks", []),
                 "source": item.get("source", []),
             }
