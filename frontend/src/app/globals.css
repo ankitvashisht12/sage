@@ -1,0 +1,103 @@
+@import "tailwindcss";
+
+:root {
+  --bg-primary: #0d1117;
+  --bg-secondary: #161b22;
+  --bg-tertiary: #21262d;
+  --bg-hover: #30363d;
+  --border: #30363d;
+  --border-light: #484f58;
+  --text-primary: #e6edf3;
+  --text-secondary: #8b949e;
+  --text-muted: #6e7681;
+  --accent-green: #3fb950;
+  --accent-green-bg: rgba(63, 185, 80, 0.15);
+  --accent-red: #f85149;
+  --accent-red-bg: rgba(248, 81, 73, 0.15);
+  --accent-blue: #58a6ff;
+  --accent-blue-bg: rgba(88, 166, 255, 0.15);
+  --accent-yellow: #d29922;
+  --accent-yellow-bg: rgba(210, 153, 34, 0.15);
+  --mark-bg: rgba(210, 153, 34, 0.35);
+  --mark-border: rgba(210, 153, 34, 0.6);
+  --font-mono: var(--font-ibm-plex-mono);
+}
+
+@theme inline {
+  --color-background: var(--bg-primary);
+  --color-foreground: var(--text-primary);
+  --font-mono: var(--font-ibm-plex-mono);
+}
+
+body {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-mono), monospace;
+  overflow: hidden;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-secondary);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--bg-hover);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--border-light);
+}
+
+/* Citation highlight */
+mark.citation-highlight {
+  background: var(--mark-bg);
+  border-bottom: 2px solid var(--mark-border);
+  color: inherit;
+  padding: 1px 0;
+  border-radius: 2px;
+}
+
+/* Resize handle */
+.resize-handle {
+  width: 4px;
+  cursor: col-resize;
+  background: var(--border);
+  transition: background 0.15s;
+  flex-shrink: 0;
+}
+.resize-handle:hover,
+.resize-handle.active {
+  background: var(--accent-blue);
+}
+
+/* Kbd badges */
+kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 4px;
+  font-size: 11px;
+  font-family: var(--font-mono), monospace;
+  line-height: 1;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+}
+
+/* Status dots */
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.status-dot.accepted { background: var(--accent-green); }
+.status-dot.rejected { background: var(--accent-red); }
+.status-dot.pending { background: var(--text-muted); }
