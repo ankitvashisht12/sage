@@ -1,11 +1,21 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback, useMemo } from "react";
+import type { Components } from "react-markdown";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useReviewStore } from "@/stores/reviewStore";
 import { fetchKBContent, computeSpan } from "@/lib/api";
 import CitationOverride from "./CitationOverride";
+
+const mdComponents: Components = {
+  img: ({ src, ...props }) => (src ? <img src={src} {...props} /> : null),
+};
+
+const mdCitationComponents: Components = {
+  ...mdComponents,
+  p: ({ children }) => <span>{children}</span>,
+};
 
 export default function SourceViewer() {
   const items = useReviewStore((s) => s.items);
@@ -207,22 +217,20 @@ export default function SourceViewer() {
           <div className="prose prose-sm max-w-none">
             {previewMarkdown?.citation ? (
               <>
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
                   {previewMarkdown.before}
                 </ReactMarkdown>
                 <mark ref={previewMarkRef} className="citation-highlight">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
-                    p: ({ children }) => <span>{children}</span>,
-                  }}>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdCitationComponents}>
                     {previewMarkdown.citation}
                   </ReactMarkdown>
                 </mark>
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
                   {previewMarkdown.after}
                 </ReactMarkdown>
               </>
             ) : (
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+              <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
                 {content}
               </ReactMarkdown>
             )}
