@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
 Validation helpers for synthetic data generation.
-Handles fuzzy matching for answer validation and question deduplication.
+Handles exact citation matching with span computation and question deduplication.
 """
 
 import json
+import re
 import sys
 from difflib import SequenceMatcher
 from typing import Optional
@@ -23,45 +24,53 @@ def fuzzy_match(text1: str, text2: str) -> float:
     return SequenceMatcher(None, t1, t2).ratio()
 
 
-def find_answer_in_source(answer: str, source_content: str, threshold: float = 0.95) -> tuple[bool, float]:
+def compute_span(citation: str, source_content: str) -> tuple[bool, int, int]:
     """
-    Check if answer exists in source content with fuzzy matching.
-
-    Args:
-        answer: The answer text to validate
-        source_content: The full source document content
-        threshold: Minimum similarity ratio (default 0.95)
+    Find exact character position of citation in source content.
 
     Returns:
-        Tuple of (is_valid, best_similarity_score)
+        (found, start_index, end_index)
     """
-    if not answer or not source_content:
-        return False, 0.0
+    if not citation or not source_content:
+        return False, -1, -1
 
-    answer_normalized = ' '.join(answer.lower().split())
-    answer_len = len(answer_normalized)
+    # Try exact match first
+    idx = source_content.find(citation)
+    if idx >= 0:
+        return True, idx, idx + len(citation)
 
-    # If exact substring match, return immediately
-    if answer.lower() in source_content.lower():
-        return True, 1.0
+    # Fallback: try with normalized whitespace (collapse runs of whitespace)
+    normalized_citation = re.sub(r'\s+', ' ', citation.strip())
+    normalized_source = re.sub(r'\s+', ' ', source_content)
 
-    # Sliding window approach for fuzzy matching
-    source_normalized = ' '.join(source_content.lower().split())
-    best_score = 0.0
+    idx = normalized_source.find(normalized_citation)
+    if idx >= 0:
+        # Map back to original positions by counting characters
+        # Walk through original source, tracking normalized position
+        orig_start = -1
+        orig_end = -1
+        norm_pos = 0
+        i = 0
+        # Skip leading whitespace in source to match normalized
+        while i < len(source_content):
+            # Skip extra whitespace in original
+            if source_content[i].isspace():
+                if norm_pos > 0 and normalized_source[norm_pos - 1] == ' ':
+                    i += 1
+                    continue
+            if norm_pos == idx and orig_start == -1:
+                orig_start = i
+            if norm_pos == idx + len(normalized_citation):
+                orig_end = i
+                break
+            norm_pos += 1
+            i += 1
+        if orig_start >= 0 and orig_end < 0:
+            orig_end = i
+        if orig_start >= 0 and orig_end >= 0:
+            return True, orig_start, orig_end
 
-    # Try different window sizes around the answer length
-    for window_size in [answer_len, int(answer_len * 0.9), int(answer_len * 1.1)]:
-        if window_size <= 0:
-            continue
-        for i in range(len(source_normalized) - window_size + 1):
-            window = source_normalized[i:i + window_size]
-            score = SequenceMatcher(None, answer_normalized, window).ratio()
-            if score > best_score:
-                best_score = score
-            if score >= threshold:
-                return True, score
-
-    return best_score >= threshold, best_score
+    return False, -1, -1
 
 
 def is_duplicate_question(new_question: str, existing_questions: list[str], threshold: float = 0.95) -> tuple[bool, Optional[str], float]:
@@ -87,10 +96,10 @@ def is_duplicate_question(new_question: str, existing_questions: list[str], thre
     return False, None, 0.0
 
 
-def validate_pairs(pairs: list[dict], source_content: str, existing_questions: list[str],
-                   answer_threshold: float = 0.95, question_threshold: float = 0.95) -> dict:
+def validate_citations(pairs: list[dict], source_content: str, existing_questions: list[str],
+                       question_threshold: float = 0.95) -> dict:
     """
-    Validate a list of Q&A pairs.
+    Validate a list of query-citation pairs using exact matching and span computation.
 
     Returns dict with 'valid' and 'rejected' lists.
     """
@@ -101,21 +110,91 @@ def validate_pairs(pairs: list[dict], source_content: str, existing_questions: l
     batch_questions = []
 
     for pair in pairs:
-        question = pair.get('question', '')
-        answer = pair.get('answer', '')
+        query = pair.get('query', '')
+        citation = pair.get('citation', '')
 
-        # Validate answer exists in source
-        answer_valid, answer_score = find_answer_in_source(answer, source_content, answer_threshold)
-
-        if not answer_valid:
+        # Skip pairs with null citation
+        if citation is None:
             rejected.append({
                 **pair,
-                'rejection_reason': 'answer_mismatch',
-                'similarity_score': answer_score
+                'rejection_reason': 'citation_null',
+            })
+            continue
+
+        # Validate citation exists in source with exact match
+        found, start_index, end_index = compute_span(citation, source_content)
+
+        if not found:
+            rejected.append({
+                **pair,
+                'rejection_reason': 'citation_not_found',
             })
             continue
 
         # Check for duplicate question in existing output
+        is_dup, dup_match, dup_score = is_duplicate_question(
+            query,
+            existing_questions + batch_questions,
+            question_threshold
+        )
+
+        if is_dup:
+            rejected.append({
+                **pair,
+                'rejection_reason': 'duplicate_question',
+                'similarity_score': dup_score,
+                'duplicate_of': dup_match
+            })
+            continue
+
+        # Valid pair — add span info
+        valid_pair = {**pair}
+        valid_pair['start_index'] = start_index
+        valid_pair['end_index'] = end_index
+        valid.append(valid_pair)
+        batch_questions.append(query)
+
+    return {
+        'valid': valid,
+        'rejected': rejected
+    }
+
+
+# Keep legacy validate_pairs for backward compatibility
+def validate_pairs(pairs: list[dict], source_content: str, existing_questions: list[str],
+                   answer_threshold: float = 0.95, question_threshold: float = 0.95) -> dict:
+    """
+    Validate a list of Q&A pairs (legacy single-call format).
+
+    Returns dict with 'valid' and 'rejected' lists.
+    """
+    valid = []
+    rejected = []
+
+    batch_questions = []
+
+    for pair in pairs:
+        question = pair.get('question', pair.get('query', ''))
+        answer = pair.get('answer', pair.get('citation', ''))
+
+        if not answer:
+            rejected.append({
+                **pair,
+                'rejection_reason': 'answer_missing',
+            })
+            continue
+
+        # Use exact span matching
+        found, start_index, end_index = compute_span(answer, source_content)
+
+        if not found:
+            rejected.append({
+                **pair,
+                'rejection_reason': 'answer_mismatch',
+            })
+            continue
+
+        # Check for duplicate question
         is_dup, dup_match, dup_score = is_duplicate_question(
             question,
             existing_questions + batch_questions,
@@ -131,7 +210,6 @@ def validate_pairs(pairs: list[dict], source_content: str, existing_questions: l
             })
             continue
 
-        # Valid pair
         valid.append(pair)
         batch_questions.append(question)
 
@@ -147,6 +225,7 @@ def main():
 
     Usage:
         python validate.py validate <pairs_json> <source_content_file> <existing_questions_file>
+        python validate.py validate_citations <pairs_json> <source_content_file> <existing_questions_file>
         python validate.py check_answer <answer> <source_content>
         python validate.py check_duplicate <question> <existing_questions_json>
     """
@@ -170,6 +249,20 @@ def main():
         result = validate_pairs(pairs, source_content, existing_questions)
         print(json.dumps(result))
 
+    elif command == 'validate_citations':
+        if len(sys.argv) < 5:
+            print("Usage: python validate.py validate_citations <pairs_json> <source_file> <existing_questions_file>", file=sys.stderr)
+            sys.exit(1)
+
+        pairs = json.loads(sys.argv[2])
+        with open(sys.argv[3], 'r') as f:
+            source_content = f.read()
+        with open(sys.argv[4], 'r') as f:
+            existing_questions = json.load(f)
+
+        result = validate_citations(pairs, source_content, existing_questions)
+        print(json.dumps(result))
+
     elif command == 'check_answer':
         if len(sys.argv) < 4:
             print("Usage: python validate.py check_answer <answer> <source_content>", file=sys.stderr)
@@ -177,8 +270,8 @@ def main():
 
         answer = sys.argv[2]
         source_content = sys.argv[3]
-        is_valid, score = find_answer_in_source(answer, source_content)
-        print(json.dumps({'valid': is_valid, 'score': score}))
+        found, start, end = compute_span(answer, source_content)
+        print(json.dumps({'valid': found, 'start_index': start, 'end_index': end}))
 
     elif command == 'check_duplicate':
         if len(sys.argv) < 4:
