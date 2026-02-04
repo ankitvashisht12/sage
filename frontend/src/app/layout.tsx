@@ -9,7 +9,7 @@ const ibmPlexMono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Review Tool",
+  title: "Sage Review Tool",
   description: "Review synthetic Q&A pairs for RAG evaluation",
 };
 

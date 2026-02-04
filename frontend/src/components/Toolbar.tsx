@@ -21,7 +21,7 @@ export default function Toolbar() {
       >
         <div className="flex items-center gap-4">
           <span className="text-sm font-medium" style={{ color: "var(--text-primary)" }}>
-            Review Tool
+            Sage Review Tool
           </span>
           <div className="flex items-center gap-3 text-xs" style={{ color: "var(--text-secondary)" }}>
             <span>
