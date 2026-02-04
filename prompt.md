@@ -6,12 +6,12 @@ You are an expert at generating realistic, diverse query-answer pairs for RAG (R
 
 ## Your Objective
 
-Generate query-answer pairs that **simulate real production traffic** to a chatbot widget. This means:
+Generate realistic queries that **simulate real production traffic** to a chatbot widget. This means:
 1. Queries look like they come from diverse real users — not a clean FAQ list
 2. Queries include the full spectrum of human messiness: typos, multiple languages, casual tone, formatting artifacts, varied lengths
-3. Answers are **exact excerpts** from the source content (word-for-word citations)
-4. Each pair includes the relevant chunks that contain the answer
-5. The topic and intent distribution matches real-world patterns, not just what's easiest to extract
+3. The topic and intent distribution matches real-world patterns, not just what's easiest to extract
+
+**Important**: You are generating queries ONLY. Do not include answers, citations, or chunks. Citation extraction is handled in a separate step.
 
 ---
 
@@ -39,12 +39,12 @@ Generate query-answer pairs that **simulate real production traffic** to a chatb
 
 ## Output Requirements
 
-Generate an appropriate number of query-answer pairs based on the content depth and length:
-- **Short/simple pages**: 3-5 pairs
-- **Medium pages**: 5-8 pairs
-- **Long/detailed pages**: 8-10 pairs
+Generate an appropriate number of queries based on the content depth and length:
+- **Short/simple pages**: 3-5 queries
+- **Medium pages**: 5-8 queries
+- **Long/detailed pages**: 8-10 queries
 
-**Maximum: 10 pairs per page.** More pairs are needed to achieve the required diversity across languages, tones, styles, and query types while maintaining quality.
+**Maximum: 10 queries per page.** More queries are needed to achieve the required diversity across languages, tones, styles, and query types while maintaining quality.
 
 Output in valid JSON format.
 
@@ -55,11 +55,8 @@ Output in valid JSON format.
   "pairs": [
     {
       "query": "string - A realistic user input (question, statement, command, or description)",
-      "answer": "string - EXACT text excerpt from the source that answers/addresses the query",
       "category": "string - Primary topic category",
       "subcategory": "string or null - More specific classification",
-      "chunks": ["string array - Relevant text passages from the source"],
-      "source": ["string array - Source URLs or identifiers"],
       "query_metadata": {
         "language": "string - ISO 639-1 code (en, es, fr, it, pt, hi, de, etc.)",
         "has_typos": "boolean - whether the query intentionally contains typos",
@@ -70,6 +67,8 @@ Output in valid JSON format.
   ]
 }
 ```
+
+**Important**: Do NOT include answers, citations, or chunks in your output. Only generate the queries with their metadata. Citation extraction will be handled separately.
 
 ---
 
@@ -166,36 +165,7 @@ Study these real production queries carefully. Your output should be **indisting
 
 ## Critical Rules
 
-### Rule 1: Answers Must Be Exact Citations
-
-The `answer` field MUST contain text that appears **exactly** in the source content. This includes:
-- Exact wording (no paraphrasing)
-- Original markdown formatting (links, bold, italics)
-- Original punctuation and spacing
-
-**Note**: The realism requirements (typos, multilingual, casual tone, formatting artifacts) apply to the `query` field ONLY. The `answer` field must always be a pristine, exact citation from the source.
-
-**WRONG:**
-```json
-{
-  "query": "What is the refund policy?",
-  "answer": "You can get a refund within thirty days"
-}
-```
-
-**CORRECT:**
-```json
-{
-  "query": "whats ur refund polcy?",
-  "answer": "Refunds are available within 30 days of purchase."
-}
-```
-
-### Rule 2: Chunks Provide Context
-
-The `chunks` array should contain the broader text passages (paragraphs or sections) from which the answer is extracted. These help establish context for RAG evaluation.
-
-### Rule 3: Query Diversity
+### Rule 1: Query Diversity
 
 Generate diverse query types — note that real users do NOT always ask questions:
 
@@ -214,7 +184,7 @@ Generate diverse query types — note that real users do NOT always ask question
 - Greetings with embedded queries: "Hi, does tars have multi-turn dialogue capability & memory"
 - Bare phrases: "price per month", "free trial", "whatsapp integration"
 
-### Rule 4: Match Real User Behavior
+### Rule 2: Match Real User Behavior
 
 If real user queries are provided, deeply analyze and replicate:
 - **Tone spectrum**: from "thanks dude" casual to "Good afternoon, I would like to inquire" formal
@@ -227,7 +197,7 @@ If real user queries are provided, deeply analyze and replicate:
 
 Do NOT sanitize or clean up the query style. The goal is to produce queries that are indistinguishable from real user input, including all its imperfections.
 
-### Rule 5: Category & Topic Balance
+### Rule 3: Category & Topic Balance
 
 Assign categories based on content. **Critical**: match the real-world topic distribution, not just what's easiest to extract from the KB:
 
@@ -291,13 +261,8 @@ Generate output like:
   "pairs": [
     {
       "query": "quanto costa il piano Pro?",
-      "answer": "**Pro Plan** - $29/month",
       "category": "pricing",
       "subcategory": "plans",
-      "chunks": [
-        "**Pro Plan** - $29/month\n- Up to 10,000 API calls\n- Priority support\n- Advanced analytics\n- Custom integrations"
-      ],
-      "source": ["https://example.com/pricing"],
       "query_metadata": {
         "language": "it",
         "has_typos": false,
@@ -307,13 +272,8 @@ Generate output like:
     },
     {
       "query": "I have a small ecommerce busines and I need a chatbot for customer support, whats the cheapest plan that includes custom intgrations?",
-      "answer": "**Pro Plan** - $29/month\n- Up to 10,000 API calls\n- Priority support\n- Advanced analytics\n- Custom integrations",
       "category": "chatbot_creation",
       "subcategory": "pricing",
-      "chunks": [
-        "We offer three pricing tiers:\n\n**Starter Plan** - $9/month\n- Up to 1,000 API calls\n- Email support\n- Basic analytics\n\n**Pro Plan** - $29/month\n- Up to 10,000 API calls\n- Priority support\n- Advanced analytics\n- Custom integrations"
-      ],
-      "source": ["https://example.com/pricing"],
       "query_metadata": {
         "language": "en",
         "has_typos": true,
@@ -323,13 +283,8 @@ Generate output like:
     },
     {
       "query": "price per month",
-      "answer": "**Starter Plan** - $9/month",
       "category": "pricing",
       "subcategory": "plans",
-      "chunks": [
-        "We offer three pricing tiers:\n\n**Starter Plan** - $9/month\n- Up to 1,000 API calls\n- Email support\n- Basic analytics"
-      ],
-      "source": ["https://example.com/pricing"],
       "query_metadata": {
         "language": "en",
         "has_typos": false,
@@ -339,13 +294,8 @@ Generate output like:
     },
     {
       "query": "what features are included in the starter plan",
-      "answer": "- Up to 1,000 API calls\n- Email support\n- Basic analytics",
       "category": "features_capabilities",
       "subcategory": "plans",
-      "chunks": [
-        "**Starter Plan** - $9/month\n- Up to 1,000 API calls\n- Email support\n- Basic analytics"
-      ],
-      "source": ["https://example.com/pricing"],
       "query_metadata": {
         "language": "en",
         "has_typos": false,
@@ -355,13 +305,8 @@ Generate output like:
     },
     {
       "query": "How many API calls can I make on the Pro Plan?",
-      "answer": "Up to 10,000 API calls",
       "category": "pricing",
       "subcategory": "limits",
-      "chunks": [
-        "**Pro Plan** - $29/month\n- Up to 10,000 API calls\n- Priority support\n- Advanced analytics\n- Custom integrations"
-      ],
-      "source": ["https://example.com/pricing"],
       "query_metadata": {
         "language": "en",
         "has_typos": false,
@@ -380,11 +325,8 @@ Notice: The example includes an Italian query, a long use-case description with 
 ## Final Checklist
 
 Before outputting, verify:
-- [ ] All answers are exact quotes from the source
-- [ ] Chunks contain the text passages where answers appear
 - [ ] Categories are consistent and meaningful
 - [ ] JSON is valid and properly formatted
-- [ ] Source URLs/identifiers are included
 - [ ] **10-15% of queries are non-English** (if generating 10+ pairs)
 - [ ] **~8% of queries contain realistic typos**
 - [ ] **~35% of queries are 16+ words long**
