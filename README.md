@@ -1,6 +1,6 @@
 # SAGE — Synthetic Autonomous Generation Engine
 
-Generate synthetic Q&A pairs from a knowledge base using Claude CLI for RAG evaluation. SAGE includes quality analysis and an iterative prompt improvement loop that automatically refines generation prompts until synthetic data closely matches real production queries.
+Generate synthetic query-citation pairs from a knowledge base using Claude CLI for RAG evaluation. Uses a two-call pipeline (Sonnet for queries, Haiku for citations) with exact span validation. Includes quality analysis and an iterative prompt improvement loop.
 
 ## Quick Start
 
@@ -9,8 +9,8 @@ Generate synthetic Q&A pairs from a knowledge base using Claude CLI for RAG eval
 brew install jq
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# 2. Generate synthetic data
-./generate.sh
+# 2. Generate synthetic data (sample 10 files)
+./generate.sh --kb-path ./kb --queries-path ./queries/queries.json --sample 10
 
 # 3. Analyze quality against real queries
 ./analysis.sh
@@ -31,33 +31,74 @@ cp example.env .env
 
 | Tool | Installation | Purpose |
 |------|--------------|---------|
-| Claude CLI | [Download](https://claude.ai/download) | Generate Q&A pairs |
+| Claude CLI | [Download](https://claude.ai/download) | Generate queries & extract citations |
 | jq | `brew install jq` | JSON processing |
 | uv | `curl -LsSf https://astral.sh/uv/install.sh \| sh` | Python package manager |
 
 Python dependencies (`langsmith`) are auto-managed by `uv` - no manual install needed.
+
+## Architecture
+
+The generation pipeline uses two Claude calls per KB file:
+
+```
+KB Directory  ──[--sample N]──→  N random files
+       │
+  ┌────┴────┐
+  │ Phase 1 │  Call 1 per file (Sonnet, parallel ×20)
+  │         │  prompt.md → generates diverse queries + metadata
+  └────┬────┘
+       │
+  ┌────┴────┐
+  │ Phase 2 │  Call 2 per file (Haiku, parallel ×20)
+  │         │  citation_prompt.md → extracts verbatim citations
+  └────┬────┘
+       │
+  ┌────┴────┐
+  │ Phase 3 │  Merge + Validate (Python)
+  │         │  exact match, compute start_index/end_index
+  └────┬────┘
+       ├──→ output.jsonl    (valid pairs with spans)
+       └──→ rejected.jsonl  (invalid pairs with reasons)
+```
+
+**Why two calls?**
+- **Call 1 (Sonnet)** focuses on generating realistic, diverse queries — typos, multilingual, varied tone/style — without the constraint of finding exact citations
+- **Call 2 (Haiku)** focuses purely on finding exact verbatim text in the document, which is a simpler task suited for a faster/cheaper model
+- This separation improves both query diversity and citation accuracy
 
 ## Usage
 
 ### 1. Generate Synthetic Data
 
 ```bash
-./generate.sh
+./generate.sh --kb-path ./kb --queries-path ./queries/queries.json --sample 8
 ```
 
-The script will interactively prompt for:
-- **KB path** (required): Directory containing markdown files
-- **queries.json path** (optional): Real user queries for style reference
+**CLI flags:**
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--kb-path <dir>` | Knowledge base directory | prompt user |
+| `--queries-path <file>` | Real user queries for style reference | prompt user |
+| `--sample N` | Randomly select N files from KB | all files |
+| `--no-resume` | Start fresh, ignore saved state | resume if available |
+
+**Environment variables:**
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `MAX_PARALLEL` | Max concurrent Claude calls | 20 |
 
 **Features:**
-- Progress display with percentage and question counts
-- Answer validation (95% fuzzy match against source)
+- Two-phase parallel generation (Sonnet → Haiku)
+- Exact citation validation with character span computation
 - Question deduplication (95% fuzzy match)
 - Resume capability if interrupted
-- Rejected pairs logged separately
+- Rejected pairs logged with reasons
 
 **Output:**
-- `output.jsonl` - Valid Q&A pairs
+- `output.jsonl` - Valid query-citation pairs with spans
 - `rejected.jsonl` - Failed validations with reasons
 
 ### 2. Analyze Synthetic Data Quality
@@ -87,34 +128,6 @@ The script will interactively prompt for:
 **Output:**
 - `analysis_report.md` - Full report with scores, examples, and recommendations
 - Summary table displayed in terminal
-
-**Example output:**
-```
-Synthetic Data Analyzer
-========================
-
-Enter path to synthetic data (output.jsonl): ./output.jsonl
-Enter path to real production queries (queries.json): ./queries/tagged_queries.json
-
-Loaded 65 synthetic Q&A pairs
-Loaded 287 real production queries
-
-Running analysis with Claude CLI...
-
-Analysis complete!
-
-  Report saved to: ./analysis_report.md
-
-  Overall similarity score: 34%
-
-  | Dimension             | Similarity | Grade |
-  |-----------------------|-----------|-------|
-  | Language Distribution | 10%       | F     |
-  | Typos & Messiness     | 5%        | F     |
-  | Topic Coverage        | 35%       | D     |
-  | ...                   | ...       | ...   |
-  | **Overall Score**     | **34%**   | **D** |
-```
 
 ### 3. Improve Prompt (Iterative Loop)
 
@@ -179,51 +192,6 @@ Automates the full feedback loop: **generate -> analyze -> (improve -> generate 
   --target-score 70
 ```
 
-**What it does each iteration:**
-1. Cleans previous output (state file, output.jsonl, rejected.jsonl)
-2. Runs `generate.sh` with `--no-resume`
-3. Runs `analysis.sh` to score quality
-4. If score >= target: stops with success
-5. Runs `improve_prompt.sh` to refine the prompt
-6. Repeats
-
-**Error handling:**
-- Generation or analysis failure stops the pipeline immediately
-- Prompt improvement failure is tolerated once; 2 consecutive failures stops the pipeline
-- Ctrl+C prints a partial summary table
-
-**Output:**
-```
-  Iteration  |  Score  |  Delta
-  -----------+---------+--------
-      1      |   27%   |    -
-      2      |   45%   |  +18%
-      3      |   62%   |  +17%
-      4      |   78%   |  +16%
-      5      |   86%   |   +8%
-
-  Result: TARGET REACHED (86% >= 85%)
-  Total iterations: 5
-  Total improvement: +59%
-```
-
-**CLI args for individual scripts:**
-
-All three scripts also accept CLI arguments for non-interactive use:
-
-```bash
-# generate.sh
-./generate.sh --kb-path ./kb --queries-path ./queries/queries.json --no-resume
-
-# analysis.sh
-./analysis.sh --synthetic-path ./output.jsonl --queries-path ./queries/queries.json
-
-# improve_prompt.sh
-./improve_prompt.sh --queries-path ./queries/queries.json
-```
-
-When no flags are provided, each script falls back to its original interactive prompts.
-
 ### 5. Upload to LangSmith
 
 ```bash
@@ -240,19 +208,18 @@ Get your API key from: https://smith.langchain.com/settings
 ## File Structure
 
 ```
-├── generate.sh              # Generate synthetic Q&A pairs
+├── generate.sh              # Two-call generation pipeline
+├── prompt.md                # Call 1 prompt — generate queries only (Sonnet)
+├── citation_prompt.md       # Call 2 prompt — extract verbatim citations (Haiku)
 ├── analysis.sh              # Analyze quality against real queries
 ├── improve_prompt.sh        # Improve prompt based on analysis
-├── run_pipeline.sh          # Automated feedback loop (generate->analyze->improve)
+├── run_pipeline.sh          # Automated feedback loop
 ├── upload_langsmith.sh      # Upload to LangSmith
-├── prompt.md                # Generation prompt template
-├── analysis_prompt.md       # Analysis prompt template
-├── improve_prompt_template.md # Prompt improvement template
 ├── CLAUDE.md                # Claude instructions
 ├── pyproject.toml           # Python dependencies
 ├── example.env              # Environment template
 ├── helpers/
-│   ├── validate.py          # Fuzzy matching & deduplication
+│   ├── validate.py          # Exact citation matching & span computation
 │   └── upload_langsmith.py  # LangSmith upload logic
 ├── backups/                 # Version history (auto-created)
 │   └── v1/
@@ -309,40 +276,56 @@ Each line in `output.jsonl`:
 
 ```json
 {
-  "question": "What is the refund policy?",
-  "answer": "Refunds are available within **30 days** of purchase.",
+  "query": "whats ur refund polcy?",
+  "doc_id": "refund-policy.md",
+  "citation": "Refunds are available within **30 days** of purchase.",
+  "start_index": 1842,
+  "end_index": 1892,
   "category": "billing",
   "subcategory": "refunds",
-  "chunks": ["Full paragraph containing the answer..."],
-  "source": ["https://example.com/docs/billing"]
+  "chunks": ["Full paragraph containing the citation..."],
+  "source": ["https://example.com/docs/billing"],
+  "query_metadata": {
+    "language": "en",
+    "has_typos": true,
+    "tone": "casual",
+    "style": "question"
+  }
 }
 ```
 
 | Field | Type | Description |
 |-------|------|-------------|
-| question | string | The synthetic question |
-| answer | string | Exact excerpt from source (word-for-word) |
+| query | string | Realistic user input (may contain typos, non-English, etc.) |
+| doc_id | string | KB filename the citation comes from |
+| citation | string | Exact verbatim text from source document |
+| start_index | int | Character offset where citation begins in source |
+| end_index | int | Character offset where citation ends in source |
 | category | string | Topic category |
 | subcategory | string? | More specific classification |
-| chunks | string[] | Relevant text passages from source |
+| chunks | string[] | Broader passages containing the citation |
 | source | string[] | Source URLs or filenames |
+| query_metadata | object | Language, typos, tone, style metadata |
+
+**Span verification:** `source_content[start_index:end_index] == citation`
 
 ## Configuration
 
-### Q&A Pairs Per Page
+### Queries Per Page
 
 Claude automatically decides based on content length:
-- Short pages: 2-5 pairs
-- Medium pages: 5-10 pairs
-- Long pages: 10-15 pairs
-- Maximum: 15 per page
+- Short pages: 3-5 queries
+- Medium pages: 5-8 queries
+- Long pages: 8-10 queries
+- Maximum: 10 per page
 
-### Validation Thresholds
+### Validation
 
-| Check | Threshold | Action if failed |
-|-------|-----------|------------------|
-| Answer match | 95% fuzzy | Rejected |
-| Question duplicate | 95% fuzzy | Rejected |
+| Check | Method | Action if failed |
+|-------|--------|------------------|
+| Citation match | Exact `str.find()` + whitespace normalization fallback | Rejected (`citation_not_found`) |
+| Null citation | Citation returned as null by Haiku | Rejected (`citation_null`) |
+| Question duplicate | 95% fuzzy match | Rejected (`duplicate_question`) |
 
 ### Resume Capability
 
@@ -354,13 +337,10 @@ Found previous session with 3/15 files processed. Resume? [Y/n]
 
 ## Customization
 
-### Modify the Prompt
+### Modify the Prompts
 
-Edit `prompt.md` to customize:
-- Question types generated
-- Output format
-- Category guidelines
-- Number of pairs per page
+- Edit `prompt.md` to customize query generation (types, tone, language distribution)
+- Edit `citation_prompt.md` to customize citation extraction rules
 
 ### Environment Variables
 
@@ -371,54 +351,9 @@ LANGSMITH_ENDPOINT=https://api.smith.langchain.com  # Optional
 LANGSMITH_DATASET_NAME=my-dataset                    # Optional
 ```
 
-## How It Works
-
-### Generation Pipeline
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  For each markdown file:                                    │
-│                                                             │
-│  1. Extract content & metadata                              │
-│  2. Build prompt (content + template + queries)             │
-│  3. Call Claude CLI (fresh context per file)                │
-│  4. Parse JSON response                                     │
-│  5. Validate answers exist in source (95% fuzzy)            │
-│  6. Check questions are unique (95% fuzzy)                  │
-│  7. Append valid pairs to output.jsonl                      │
-│  8. Log rejected pairs to rejected.jsonl                    │
-│  9. Save state for resume                                   │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### Analysis Pipeline
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  1. Load synthetic data (output.jsonl)                      │
-│  2. Load real production queries (queries.json)             │
-│  3. Build analysis prompt with both datasets                │
-│  4. Call Claude CLI for comparison                          │
-│  5. Score 8 dimensions (0-100%)                             │
-│  6. Calculate weighted overall score                        │
-│  7. Generate report with examples & recommendations         │
-│  8. Save to analysis_report.md                              │
-└─────────────────────────────────────────────────────────────┘
-```
-
-### Improvement Loop
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  1. Read current prompt.md                                  │
-│  2. Read analysis_report.md (gaps identified)               │
-│  3. Sample 15 diverse real queries as style reference        │
-│  4. Call Claude CLI to generate improved prompt              │
-│  5. Show diff of changes                                    │
-│  6. Ask for user approval                                   │
-│  7. Backup current version (prompt + output + report)       │
-│  8. Apply improved prompt                                   │
-└─────────────────────────────────────────────────────────────┘
+```bash
+# Shell environment
+MAX_PARALLEL=10 ./generate.sh --kb-path ./kb  # Limit concurrent calls
 ```
 
 ## Troubleshooting
@@ -436,11 +371,12 @@ brew install jq
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-### Validation rejecting too many answers
-The 95% fuzzy match threshold may be too strict. Check `rejected.jsonl` to see similarity scores. You can adjust the threshold in `helpers/validate.py`.
+### Too many citations rejected
+Check `rejected.jsonl` for `citation_not_found` entries. This means Haiku's extracted text didn't exactly match the source. The whitespace normalization fallback handles minor differences, but paraphrased citations will be rejected by design.
 
 ### Resume not working
 Delete `.generation_state.json` to start fresh:
 ```bash
 rm .generation_state.json
 ```
+Or use the `--no-resume` flag.
