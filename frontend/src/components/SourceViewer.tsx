@@ -179,21 +179,32 @@ export default function SourceViewer() {
         </div>
         <button
           onClick={() => setPreview(!preview)}
-          className="flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] transition-colors"
+          title={preview ? "Show raw markdown" : "Preview markdown"}
+          className="flex items-center justify-center w-6 h-6 rounded transition-colors"
           style={{
             background: preview ? "var(--accent-blue-bg)" : "var(--bg-tertiary)",
             color: preview ? "var(--accent-blue)" : "var(--text-secondary)",
             border: `1px solid ${preview ? "var(--accent-blue)" : "var(--border)"}`,
           }}
         >
-          {preview ? "Raw" : "Preview"}
+          {preview ? (
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="16 18 22 12 16 6" />
+              <polyline points="8 6 2 12 8 18" />
+            </svg>
+          ) : (
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+              <circle cx="12" cy="12" r="3" />
+            </svg>
+          )}
         </button>
       </div>
 
       {/* Content */}
       <div className="flex-1 overflow-auto p-4" onMouseUp={handleMouseUp}>
         {preview ? (
-          <div className="md-preview">
+          <div className="prose prose-sm max-w-none">
             {previewMarkdown?.citation ? (
               <>
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>
